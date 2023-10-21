@@ -34,33 +34,22 @@ import wandb
 
 # NOTE: Need to turn off Distributed sampling if you're only using a single GPU 
 def prepare_dataloader(config, dataset, is_eval=False): 
-    if config.task == "squad":
-        collate_fn = default_data_collator    
-    else:
-        collate_fn = classification_collate_fn
-    
     if is_eval:   
-        if config.task == "squad": 
-            dataset = dataset.remove_columns(["example_id", "offset_mapping"])
-            dataset.set_format("torch")         
         dl = DataLoader(
                 dataset,
                 batch_size = config.batch_size, 
                 pin_memory=True, 
                 shuffle=False,
-                collate_fn=collate_fn, 
+                collate_fn=classification_collate_fn, 
                 num_workers=2)  
     else:  
-        if config.task == "squad": 
-            dataset.set_format("torch")   
-            sampler=DistributedSampler(dataset),
         dl = DataLoader(
                 dataset,
                 batch_size = config.batch_size, 
                 pin_memory=True, 
                 sampler=DistributedSampler(dataset),
                 shuffle=False,
-                collate_fn=collate_fn, 
+                collate_fn=classification_collate_fn, 
                 num_workers=2)    
     return dl 
 
@@ -90,7 +79,7 @@ def classification_collate_fn(batch):
     return outputs
 
 
-def classification_eval(config, eval_loader, model, save_states=False, sentence_embed=False):
+def classification_eval(config, eval_loader, model):
     # Set model to eval mode. Load metric and create data loader.  
     model.eval() 
     num_saved_points = 0
@@ -103,25 +92,6 @@ def classification_eval(config, eval_loader, model, save_states=False, sentence_
     # Lists to store results. 
     preds_list = []
     labels_list = [] 
-    states_list = {"labels": []} 
-    sentence_list = {}  
-
-    #TODO: Will need to adapt this to handle the Pythia suite of models 
-    if config.model_name in  ["distbert", "pythia-70m"]:
-        num_layers=7
-    elif config.model_name == "pythia-410m": 
-        num_layers=25 
-    else:
-        num_layers=13 
-    
-    if config.model_name == "pythia-410m":
-        dim = 1024
-    else:
-        dim=768
-
-    for i in range(1,num_layers):
-        states_list[i] = []
-        sentence_list[i] = [] 
     
     for idx, batch in enumerate(eval_loader):
         # send batch to device  
@@ -130,23 +100,7 @@ def classification_eval(config, eval_loader, model, save_states=False, sentence_
         with torch.no_grad():
             outputs = model(**batch, output_hidden_states=save_states) 
             logits = outputs.logits   
-        # CAN add a statement to limit the number of points saved 
-        if save_states:
-            states = outputs.hidden_states 
-            if config.model_name in ["bert", "distbert", "albert", "roberta"]:     
-                 for i in range(1, len(states)):   
-                     # ALL TOKEN EMBEDDINGS.  
-                     states_list[i].append(torch.reshape(states[i], (-1,dim)).detach().cpu().numpy())      
-                     # SENTENCE EMBEDDINGS 
-                     if sentence_embed==True: 
-                        sentence_list[i].append(torch.reshape(states[i][:,0,:], (-1,dim)).detach().cpu().numpy()) 
-            if config.model_name in ["gpt2", "pythia-70m"," pythia-160m", "pythia-410m"]:
-                 for i in range(1, len(states)):       
-                     # ALL TOKEN EMBEDDINGS 
-                     states_list[i].append(torch.reshape(states[i], (-1,dim)).detach().cpu().numpy()) 
-                     # SENTENCE EMBEDDINGS 
-                     if sentence_embed==True: 
-                        sentence_list[i].append(torch.reshape(states[i][:,-1,:],(-1,dim)).detach().cpu().numpy())    
+            
         # Store Predictions and Labels
         preds = logits.argmax(axis=1)        
         preds = preds.detach().cpu().numpy()  
@@ -157,17 +111,12 @@ def classification_eval(config, eval_loader, model, save_states=False, sentence_
     # Compute Accuracy 
     preds = np.concatenate(preds_list, axis=0)
     labels = np.concatenate(labels_list, axis=0)
-    
-    perf = (preds ==labels).sum()/len(preds)
+
     # Set model to train!  
     model.train() 
-    # Return acc, points states and sentence states 
-    if save_states==True and sentence_embed==True:
-        return perf, states_list, sentence_list, preds 
-    elif save_states:
-        return perf, states_list, preds 
-    else:
-        return perf
+    perf = (preds ==labels).sum()/len(preds)
+    
+    return perf
 
 def load_classification_objs(config):
     """ 
