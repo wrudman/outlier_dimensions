@@ -1,5 +1,3 @@
-
-from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import accuracy_score
 from training_utils import * 
 
@@ -12,18 +10,11 @@ from torch.distributed import init_process_group, destroy_process_group
 from torch.nn.parallel import DistributedDataParallel as DDP 
 import torch.multiprocessing as mp
 # Misc  
-from tqdm import tqdm 
 import argparse 
 from datasets import Dataset
 # Custom Functions 
-from analysis import * 
 from training_utils import *
 import hickle
-
-
-def id_estimate(id_model, data):
-    # Note: this function only works for the built-in skdim.id estimators
-    return id_model().fit(data).dimension_
 
 def collate_fn(batch):
     """ Collate function used to make batches for the DataLoader"""  
@@ -52,9 +43,6 @@ def flatten_list(nested_list):
 
 def run_analysis(config, model, eval_loader, seed):  
     # Used to compute stats of the model during the course of training  
-    #id_model = TwoNN  
-    #performance, _, sentence_states, preds = classification_eval(config, eval_data, model, save_states=True, sentence_embed=True)  
-
     eval_states, eval_labels = get_states(config, model, eval_loader) 
 
     states = {"states": eval_states, "labels": eval_labels}
@@ -73,71 +61,6 @@ def run_analysis(config, model, eval_loader, seed):
 
     hickle.dump(results, config.model_name + "_" +  str(seed) + "_" + config.task + "_analysis.hickle", mode='w')  
     return results
-
-# Eval ablate 
-def classification_eval_ablate(args, data, model, epoch, ablate_dims, direction, hidden_states=False):
-    # Set model to eval mode. Load metric and create data loader.  
-    print("Evaluating") 
-    model.eval() 
-    eval_loader = DataLoader(data, batch_size=args.batch_size, collate_fn=collate_fn)
-    
-    # Send model to gpu if available
-    device = 'cuda:0' if torch.cuda.is_available() else 'cpu'
-    model.to(device)
-    
-    # Lists to store results. 
-    preds_list = []
-    labels_list = [] 
-    states_list = {"states": [], "labels": [], "preds": []}  
-    # main EVAL loop 
-    
-    for idx, batch in enumerate(eval_loader):
-        # send batch to device  
-        batch = {key: value.to(device) for key, value in batch.items()} 
-       
-        # Set model to eval and run input batches with no_grad to disable gradient calculations   
-        model.eval()
-        with torch.no_grad():
-            outputs = model(**batch, output_hidden_states=True) 
-            states = outputs.hidden_states  
-            if args.model == "gpt2": 
-                states = states[-1][:,-1,:]
-            elif args.model == "bert": 
-                states = states[-1][:,0,:]
-            # Set the ablating dimensions to zero
-            # Let's try to do this by multiplying.           
-            for dim in ablate_dims:
-                states[:,dim] = 0  
-            # Feed in the ablating representations into the classification head to get logits.  
-            if args.model == "gpt2": 
-                logits = model.score(states)
-            elif args.model == "bert":  
-                #In the BERT model, there is an additional pooling layer before the classifier  
-                pool = model.bert.pooler(states.unsqueeze(dim=1)) 
-                logits = model.classifier(pool) 
-            # CAN COLLECT HIDDEN STATES HERE. 
-            if hidden_states==True:
-                states_list["states"].append(states.detach().cpu().numpy()) 
-
-        # Store Predictions and Labels 
-        preds = logits.argmax(axis=1)        
-        preds = preds.detach().cpu().numpy()  
-        preds_list.append(preds)   
-        states_list["preds"].append(preds) 
-        labels = batch["labels"].detach().cpu().numpy()  
-        states_list["labels"].append(labels)   
-        labels_list.append(labels)  
-        probs = torch.nn.functional.softmax(logits, dim=1)  
-    
-    # Compute Accuracy 
-    preds = np.concatenate(preds_list, axis=0)
-    labels = np.concatenate(labels_list, axis=0)
-    acc = (preds == labels).sum()/len(preds)
-    # NEED TO CHANGE THE NAME OF THE FILES SO WE CAN HAVE TOP DOWN AND BOTTOM DOWN. 
-    if hidden_states==True: 
-        hickle.dump(states_list, args.model + "_" + args.task + "_" + epoch + "_" + str(len(ablate_dims))+ "_" + direction +".hickle", mode='w')
-    
-    return acc, probs 
 
 # Brute threshold and logistic regression analysis
 def get_states(config, model, data_loader):
@@ -167,9 +90,6 @@ def get_states(config, model, data_loader):
                 states.append(torch.reshape(batch_states[-1][:,-1,:],(-1, batch_states[-1].shape[-1])).detach().cpu().numpy())    
         # Also, append the labels             
         labels.append(batch["labels"].detach().cpu().numpy()) 
-        #num_saved_points += np.vstack(states).shape[0] 
-        #if num_saved_points > 75000:
-        #break
     # Return states and labels (to make life easier)
     return np.vstack(states), np.concatenate(labels)
 
@@ -183,11 +103,7 @@ def max_var_predict(config, model, train_loader, eval_loader):
     # find the outlier dimensions with the maximum variance  
     var = np.var(train_states, axis=0) 
     max_dim = np.argmax(var)
-    # HERE I CAN ARGSORT THE VARIANCE, ITERATE THROUGH THEN GO THROUGH BF ALG
-    # Let's write a new function... there I will go through each dimension and assess the 1d perfomance
-    # Then, we can
-    # a) graph the association beetwen magnitude and 1d perf ability  
-    # b) create a plot with acc and dim index sorted by the magnitude of variance. 
+
     # STORING VAR STATS  
     results["max_var"] = var[max_dim]
     results["mean_var"] = np.mean(var) 
@@ -196,30 +112,26 @@ def max_var_predict(config, model, train_loader, eval_loader):
     # Representing sentence embeddings only by max_dim
     d1_train_states = train_states[:,max_dim]
     
-    # Use logistic regression to learn a threshold
-    linear_model = LogisticRegression(max_iter=500)
-    linear_model.fit(np.reshape(d1_train_states, (-1,1)), train_labels)
-    
     # Brute force approach to finding optimal threshold.
-    # We start at the mean, and then move in intervals of +/- 0.5 between mean the of d1_states - 5 and between mean of the d1_states + 5. 
+    # We start at the mean, and iterate through different epsilon values to find the best threshold for classification. 
     threshold = np.mean(d1_train_states)
     best_threshold = 0
     best_acc = 0
     # rule is 0 if the relationship 0 for less than threshold and 1 for greater than threshold
     rule = 0
     
-    for i in np.linspace(-25, 25, 101): 
-    #for i in np.linspace(-75,75,901):
+    for epsilon in np.linspace(-50, 50, 201): 
         # write a rule where we predict class 0 if below or equal to threshold and class 1 above threshold. 
-        preds = np.where(d1_train_states <= threshold + i, 0, 1)
+        preds = np.where(d1_train_states <= threshold + epsilon, 0, 1)
         acc = accuracy_score(preds, train_labels)
         if max(acc, 1-acc) > best_acc: 
             best_acc = max(acc, 1-acc)
-            best_threshold = threshold + i
+            best_threshold = threshold + epsilon
             rule = np.argmax([acc, 1-acc])
     
     # Storing results 
     results["best_threshold"] = best_threshold
+    # This determines the direction of the inequalities in our brute force algorithm. 
     results["rule"] = rule 
     
     # EVALUATING
@@ -228,91 +140,14 @@ def max_var_predict(config, model, train_loader, eval_loader):
     # Using same max_dim learned from train data! 
     d1_eval_states = eval_states[:,max_dim]
      
-    #Logistic Regression evaluation
-    lg_preds = linear_model.predict(np.reshape(d1_eval_states, (-1,1)))
-    if config.task == "cola":
-        #matthews_metric = evaluate.load("matthews_correlation")
-        r = matthews_metric.compute(references=eval_labels, predictions=lg_preds)
-        lg_perf = r["matthews_correlation"]
-    else:
-        lg_perf = accuracy_score(lg_preds, eval_labels) 
-
     # Evaluate using optimal brute force threshold.
     if rule == 0:
         bf_preds = np.where(d1_eval_states <= best_threshold, 0, 1)
     if rule == 1:
-        bf_preds = np.where(d1_eval_states > best_threshold, 0, 1) 
-    
-    if config.task == "cola":
-        matthews_metric = evaluate.load("matthews_correlation")
-        r = matthews_metric.compute(references=eval_labels, predictions=bf_preds)
-        bf_perf = r["matthews_correlation"]
-    else:
-        bf_perf = accuracy_score(bf_preds, eval_labels)
-    
-    results["lg_perf"] = lg_perf
+        bf_preds = np.where(d1_eval_states >= best_threshold, 0, 1) 
+    bf_perf = accuracy_score(bf_preds, eval_labels)
     results["bf_perf"] = bf_perf
     return results
-
-# Eval ablate 
-def classification_eval_ablate(config, eval_loader, model, ablate_dims):
-    # Set model to eval mode. Load metric and create data loader.
-    model.eval() 
-
-    # Send model to gpu if available
-    device = 'cuda:0' if torch.cuda.is_available() else 'cpu'
-    model.to(device)
-    
-    # Lists to store results. 
-    preds_list = []
-    labels_list = [] 
-    # main EVAL loop 
-    
-    for _, batch in enumerate(eval_loader):
-        # send batch to device  
-        batch = {key: value.to(device) for key, value in batch.items()} 
-       
-        # Set model to eval and run input batches with no_grad to disable gradient calculations   
-        model.eval()
-        with torch.no_grad():
-            outputs = model(**batch, output_hidden_states=True) 
-            states = outputs.hidden_states  
-            if config.model_name == "gpt2": 
-                states = states[-1][:,-1,:]
-            elif config.model_name in ["bert", "albert", "distbert"]: 
-                states = states[-1][:,0,:]
-            # Set the ablating dimensions to zero
-            # Let's try to do this by multiplying.           
-            for dim in ablate_dims:
-                states[:,dim] = 0  
-            # Feed in the ablating representations into the classification head to get logits.  
-            if config.model_name == "gpt2": 
-                logits = model.score(states)
-            elif config.model_name == "bert":  
-                #In the BERT model, there is an additional pooling layer before the classifier  
-                pool = model.bert.pooler(states.unsqueeze(dim=1)) 
-                logits = model.classifier(pool) 
-            elif config.model_name == "albert":
-                pool= model.albert.pooler(states)
-                pool_activations = model.albert.pooler_activation(pool)
-                logits = model.classifier(pool_activations)
-            elif config.model_name == "distbert":
-                pre_classifier = model.pre_classifier(states)
-                logits = model.classifier(pre_classifier)
-
-        # Store Predictions and Labels 
-        preds = logits.argmax(axis=1)        
-        preds = preds.detach().cpu().numpy()  
-        preds_list.append(preds)   
-        labels = batch["labels"].detach().cpu().numpy()   
-        labels_list.append(labels)  
-        probs = torch.nn.functional.softmax(logits, dim=1)  
-    
-    # Compute Accuracy 
-    preds = np.concatenate(preds_list, axis=0)
-    labels = np.concatenate(labels_list, axis=0)
-    acc = (preds == labels).sum()/len(preds)    
-    return acc #,probs
 
 def all_var_predict(config, model, train_loader, eval_loader):
     # Dictionary to store variance, perfomrance and the dimension index.  
@@ -340,15 +175,13 @@ def all_var_predict(config, model, train_loader, eval_loader):
         d1_train_states = train_states[:,idx]
         
         # Brute force approach to finding optimal threshold.
-        # We start at the mean, and then move in intervals of +/- 0.5 between mean the of d1_states - 25 and between mean of the d1_states + 25. 
         threshold = np.mean(d1_train_states)
         best_threshold = 0
         best_acc = 0
         # rule is 0 if the relationship 0 for less than threshold and 1 for greater than threshold
         rule = 0
         
-        #for i in np.linspace(-25,25,101): 
-        for i in np.linspace(-75,75,901):
+        for i in np.linspace(-50,50,201):
             # write a rule where we predict class 0 if below or equal to threshold and class 1 above threshold. 
             preds = np.where(d1_train_states <= threshold + i, 0, 1)
             acc = accuracy_score(preds, train_labels)
@@ -358,7 +191,6 @@ def all_var_predict(config, model, train_loader, eval_loader):
                 rule = np.argmax([acc, 1-acc])
         thresholds.append(best_threshold) 
         rules.append(rule)
-        
     
     # EVALUATING BF THRESHOLD
     #Get sentence embeddings on the validation data along with the class label. 
@@ -372,11 +204,9 @@ def all_var_predict(config, model, train_loader, eval_loader):
         if rules[i] == 0:
             bf_preds = np.where(d1_eval_states <= thresholds[i], 0, 1)
         if rules[i] == 1:
-            bf_preds = np.where(d1_eval_states > thresholds[i], 0, 1) 
+            bf_preds = np.where(d1_eval_states >= thresholds[i], 0, 1) 
         results["perf"].append(accuracy_score(bf_preds, eval_labels))  
     return results 
-
-
 
 def main():
     # Argparser to create config 
@@ -398,20 +228,20 @@ def main():
         bf_perf = [] 
         threshold = [] 
         rule = [] 
-        # CHANGE BACK TO 1,2,3,4 
+
         for i in [1,2,3,4]: 
             # Let's test out max_var_predict!!! 
             model, train_data, eval_data, _ = load_classification_objs(config) 
             # load model weights and prep dataloaders
             model.load_state_dict(torch.load("models/" +  config.model_name + "_" + str(i) + "_" + config.task + ".pth"))   
+            # Make dataloaders
             train_loader = prepare_dataloader(config, train_data, is_eval=True) 
             eval_loader = prepare_dataloader(config, eval_data, is_eval=True)   
             # full model eval acc
-            perf = classification_eval(config, eval_loader, model, save_states=False, sentence_embed=False)
+            perf = classification_eval(config, eval_loader, model)
             model_perf.append(perf) 
             # Run max_var_predict
             results = max_var_predict(config, model, train_loader, eval_loader)
-            lg_perf.append(results["lg_perf"])
             bf_perf.append(results["bf_perf"])
             threshold.append(results["best_threshold"])
             rule.append(results["rule"]) 
@@ -425,36 +255,11 @@ def main():
         print("MODEL MEAN", np.mean(model_perf)) 
         print("MODEL STD", np.std(model_perf)) 
         print("------------------------------------") 
-        print("LG", lg_perf) 
-        print("LG MEAN", np.mean(lg_perf))
-        print("LG STD", np.std(lg_perf)) 
-        print("------------------------------------") 
         print("BF", bf_perf) 
         print("BF MEAN", np.mean(bf_perf)) 
         print("BF STD", np.std(bf_perf)) 
         print("BEST THRESHOLDS:", threshold) 
         print("RULES:", rule) 
-    if config.analysis == "eval_ablate": 
-        for i in [1,2,3,4]: 
-            model, train_data, eval_data, _ = load_classification_objs(config) 
-            # load model weights and prep dataloaders
-            model.load_state_dict(torch.load("models/" +  config.model_name + "_" + str(i) + "_" + config.task + ".pth")) 
-            train_loader = prepare_dataloader(config, train_data, is_eval=True) 
-            eval_loader = prepare_dataloader(config, eval_data, is_eval=True)   
-            
-            train_states, _ = get_states(config, model, train_loader)
-            var = np.diagonal(np.cov(train_states.T)) 
-            outlier_order = np.argsort(var) 
-            
-            if config.direction=="top":
-                outlier_order = outlier_order[::-1]
-            
-            scores = []  
-            for j in range(len(outlier_order)):
-                ablate_dims = outlier_order[:j+1]  
-                scores.append(classification_eval_ablate(config, eval_loader, model, ablate_dims))  
-            print(scores) 
-            np.savetxt(config.model_name + "_" + str(i) + "_" + config.task + "_" + config.direction + ".txt", scores, delimiter=',')
     
     if config.analysis == "run_analysis":
         for i in [1,2,3,4]: 
