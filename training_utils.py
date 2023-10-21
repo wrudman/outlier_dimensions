@@ -178,23 +178,15 @@ def load_classification_objs(config):
     # Preprocessing and tokenizing data
     task_keys = {
     "mrpc": ("sentence1", "sentence2"),
-    "stsb": ("sentence1", "sentence2"),
     "qnli": ("question", "sentence"),
     "qqp": ("question1", "question2"),
     "rte": ("sentence1", "sentence2"),
     "sst2": ("sentence", None),
     }
      
-    # Loading data for the given task 
-    # TODO CHANGE THIS TOO.  
-    if config.task == "sst":
-        data = load_dataset(config.task)
-        num_labels = 5  
-    elif config.task == "stsb":
-        num_labels = 1 
-    else:
-        data = load_dataset("glue", config.task)
-        num_labels = len(data["train"].features["label"].names)
+    # Loading data for the given task  
+    data = load_dataset("glue", config.task)
+    num_labels = len(data["train"].features["label"].names)
 
     # Loading the specified model AND tokenizer 
     if "gpt2" in config.model_name: 
