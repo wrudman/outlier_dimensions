@@ -95,17 +95,10 @@ class Trainer:
         for epoch in range(self.config.num_epochs):
             self._run_epoch(epoch)
             if self.gpu_id == 0: 
-                if self.config.task == "squad":
-                    results = squad_eval(config=self.config, eval_loader=self.eval_data, eval_data=self.squad_val, raw_data=self.raw_data, model=self.model)
-                    em = results["exact_match"]
-                    f1 = results["f1"] 
-                    #wandb.log({"EM": em, "F1": f1}) 
-                    if em > self.best_performance:  
-                        self.best_performance = em
-                else:
-                    acc = classification_eval(self.config, self.eval_data, self.model)   
-                    print("ACC", acc) 
-                    #wandb.log({"Accuracy": acc}) 
+                # WE PRINT THIS JUST TO MAKE SURE TRAINING IS HAPPENING. 
+                acc = classification_eval(self.config, self.eval_data, self.model)   
+                print("ACC", acc) 
+                #wandb.log({"Accuracy": acc}) 
                         
                 if epoch+1 == self.config.num_epochs: 
                     # SAVE MODEL AND RUN ANALYSIS 
@@ -140,13 +133,13 @@ def main(rank: int, config: dict, world_size: int):
 if __name__  == "__main__":
     # Argparser to create config 
     parser = argparse.ArgumentParser()
-    parser.add_argument("--num_epochs", default=1, type=int)
-    parser.add_argument("--batch_size", default=8, type=int) 
+    parser.add_argument("--num_epochs", default=2, type=int)
+    parser.add_argument("--batch_size", default=32, type=int) 
     parser.add_argument("--task", default="sst2", type=str)
-    parser.add_argument("--model_name", default="distbert", type=str)
-    parser.add_argument("--seed", default=0, type=int)
-    #parser.add_argument("--upper_seed", default=10, type=int) 
-    parser.add_argument("--training", default="Mini", type=str) 
+    parser.add_argument("--model_name", default="bert", type=str)
+    parser.add_argument("--seed", default=1, type=int)
+    # --training also takes the argument "Mini" which will train the model on a very small subset for debugging purposes.
+    parser.add_argument("--training", default="True", type=str) 
     parser.add_argument("--learning_rate", default=1e-5, type=float)
     config = parser.parse_args() 
     
