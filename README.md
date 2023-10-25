@@ -44,7 +44,5 @@ There are a variety of different analyses that we run on our fine-tuned models. 
 ### Step 4) Plotting the Results
 
 
-
-
-
+Author Correspondence: william_rudman@brown.edu
 
