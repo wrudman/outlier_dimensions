@@ -11,5 +11,5 @@ In this study, we investigate how fine-tuning impacts outlier dimensions and sho
 
 ## Using this Repo
 Step 1) Create python environment and install dependencies: 
-'pip install -r requirements.text'
+`pip install -r requirements.text`
 
