@@ -131,11 +131,8 @@ def main(rank: int, config: dict, world_size: int):
     # Create dataloaders 
     train_loader = prepare_dataloader(config, train_data) 
     eval_loader = prepare_dataloader(config, eval_data, is_eval=True)  
-          
-    if config.task == "squad":
-        trainer = Trainer(config, model, train_loader, eval_loader, optimizer, rank, raw_data=raw_data, squad_val=eval_data)
-    else:
-        trainer = Trainer(config, model, train_loader, eval_loader, optimizer, rank)
+
+    trainer = Trainer(config, model, train_loader, eval_loader, optimizer, rank)
     
     trainer.train()
     destroy_process_group()
