@@ -10,6 +10,7 @@ In this study, we investigate how fine-tuning impacts outlier dimensions and sho
  in a single outlier dimension drives downstream model decisions. 
 
 ## Using this Repo
-Step 1) Create python environment and install dependencies: 
+Step 1) Create Python environment and install dependencies: 
+
 `pip install -r requirements.text`
 
