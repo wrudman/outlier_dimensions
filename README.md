@@ -14,7 +14,19 @@ In this study, we investigate how fine-tuning impacts outlier dimensions and sho
 
 `pip install -r requirements.text`
 
-### Step 2) Train models using `run_model.py`. 
+### Step 2) Fine-tune models
+
+We fine-tune all of our models using `run_model.py`. Launching `run_model.py` will train and save the model to the PATH: `"models/" + self.config.model_name + "_" + str(self.config.seed) + "_" + self.config.task + ".pth"`. Below is an example of how to fine-tune BERT on SST-2. Full hyperparameters and random seeds are available in Section A of the Appendix. 
+
+`python3 run_model.py --task sst2 --model bert --batch_size 32 --learning_rate 3e-5 --num_epochs 2 --seed 1`
+
+#### Argparser Options
++ **Task:** `sst2, qnli, qqp, mrpc, rte`
++ **Model:** `bert, distbert, albert, roberta, gpt2, pythia-70m, pythia-160m, pythia-410m`
+
+### Step 3) Analysis 
+
+
 
 
 
