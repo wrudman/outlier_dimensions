@@ -193,10 +193,10 @@ def load_classification_objs(config):
     # For debugging purposes, set train equal to "mini" 
     if config.training == "Mini": 
         train_data = list(map(classification_preprocess, data["train"]))[:64]  
-        eval_data = list(map(classification_preprocess, data[val_key]))[:32] 
+        eval_data = list(map(classification_preprocess, data["validation"]))[:32] 
     else: 
         train_data = list(map(classification_preprocess, data["train"]))  
-        eval_data = list(map(classification_preprocess, data[val_key])) 
+        eval_data = list(map(classification_preprocess, data["validation"])) 
 
     optimizer =  torch.optim.AdamW(model.parameters(), lr=config.learning_rate) #load optimizer and learning rate. 
     return model,train_data, eval_data, optimizer
