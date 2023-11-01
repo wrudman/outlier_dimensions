@@ -84,8 +84,6 @@ def classification_eval(config, eval_loader, model):
     model.eval() 
     num_saved_points = 0
 
-    if config.task == "stsb": 
-        pearsonr_metric = evaluate.load("pearsonr")
     # Send model to gpu if available
     device = 'cuda:0' if torch.cuda.is_available() else 'cpu'
     model.to(device)
@@ -98,7 +96,7 @@ def classification_eval(config, eval_loader, model):
         batch = {key: value.to(device) for key, value in batch.items()}  
         # Set model to eval and run input batches with no_grad to disable gradient calculations    
         with torch.no_grad():
-            outputs = model(**batch, output_hidden_states=save_states) 
+            outputs = model(**batch) 
             logits = outputs.logits   
             
         # Store Predictions and Labels
