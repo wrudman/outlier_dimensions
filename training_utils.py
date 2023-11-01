@@ -104,8 +104,8 @@ def classification_eval(config, eval_loader, model):
         preds = preds.detach().cpu().numpy()  
         preds_list.append(preds)  
         labels = batch["labels"].detach().cpu().numpy() 
-        states_list["labels"].append(labels) 
         labels_list.append(labels)  
+    
     # Compute Accuracy 
     preds = np.concatenate(preds_list, axis=0)
     labels = np.concatenate(labels_list, axis=0)
