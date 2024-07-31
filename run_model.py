@@ -44,12 +44,7 @@ class Trainer:
         self.raw_data = raw_data
         self.squad_val = squad_val
      
-    def _run_batch(self, batch):
-       
-        """ 
-        INPUT: source: mini-batch data, targets: mini-batch labels, C0: shrinkage covariance matrix (only for istar regularization)  
-        This function computes a forward, then backward pass for a mini-batch of data. Choice of regularizer is specified in the config file.  
-        """   
+    def _run_batch(self, batch):  
         # THIS IS WHERE I NEED TO CALL MY MONITOR TRAINING         
         with torch.cuda.amp.autocast(dtype=torch.float16): 
         #with torch.cuda.amp.autocast(dtype=torch.float32):
@@ -70,7 +65,6 @@ class Trainer:
         """ 
         INPUT: the current epoch for a given gpu-id
         Sends mini-batches to device and calls _run_batch to complete a single epoch.
-        Note: At the start of each epoch, we create a new shrinkage matrix to reflect changes in the models representations. 
         """ 
         b_sz = len(next(iter(self.train_data))['input_ids']) 
         self.train_data.sampler.set_epoch(epoch)
